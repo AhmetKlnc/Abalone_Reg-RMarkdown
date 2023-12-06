@@ -1,0 +1,494 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+Denizkulağının yaşı(abalone), kabuğun koni boyunca kesilmesi, boyanması ve mikroskopta halka sayısının sayılmasıyla belirlenir - bu sıkıcı ve zaman alıcı bir iştir. Elde edilmesi daha kolay olan diğer ölçümler yaşı tahmin etmek için kullanılır.
+
+NOT!! : Denizkulağının yaşı = $rings+1.5$
+
+
+
+
+Veri setindeki değişkenler ve özellikleri:
+
+Name / Data Type / Measurement Unit / Description
+
+Sex            / nominal    / --    / M, F, and I (infant)
+Length         / continuous / mm    / Longest shell measurement
+Diameter       / continuous / mm    / perpendicular to length
+Height         / continuous / mm    / with meat in shell
+Whole weight   / continuous / grams / whole abalone
+Shucked weight / continuous / grams / weight of meat
+Viscera weight / continuous / grams / gut weight (after bleeding)
+Shell weight   / continuous / grams / after being dried
+Rings          / integer    / --    / +1.5 gives the age in years
+
+
+
+
+
+
+
+Gerekli olabilecek paketler:
+```{r}
+options(warn=-1)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(broom)
+library(ggpubr)
+library(ISLR)
+library(caret)
+library(car)
+library(lmtest)
+library(olsrr)
+```
+
+   
+   
+   
+Çalışacağımız veriyi çekelim:
+
+```{r}
+library(readr)
+abalone <- read_csv("C:/Users/Ahmet/Desktop/abalone_edited.csv")
+View(abalone)
+names(abalone)
+```
+
+
+
+
+
+Veride kayıp gözlem olup olmadığını test ediyoruz.:
+
+```{r}
+library(mice)
+md.pattern(abalone)
+``` 
+  Tablodan da görüldüğü üzere veri setimiz içerisinde 67 tane eksik gözlem var
+ bunu düzeltmek için doldurma işlemi uygulayacağız.
+ 
+ 
+ 
+```{r}
+set.seed(123)
+imputed<-mice(abalone,m=3)
+```
+ 
+```{r}
+imputed$imp
+```
+
+
+
+verileri imput edilmiş 2. veriler ile dolduralım:
+```{r}
+abalone_Imp<-complete(imputed,2)
+View(abalone_Imp)
+md.pattern(abalone_Imp)
+```   
+
+
+Veri setimizdeki eksik gözlemleri doldurduk artık model oluşturmaya geçebiliriz.
+
+Veri setimizi test ve eğitim olarak bölücez:
+
+```{r}
+set.seed(123)
+sampleIndex<-sample(1:nrow(abalone_Imp),size=0.8*nrow(abalone_Imp))
+
+abtrain <- abalone_Imp[sampleIndex,]
+abtest <- abalone_Imp[-sampleIndex,]
+View(abtrain)
+```
+
+
+
+
+Model oluşturmadan önce değişkenler arasındaki korelasyona bakalım --->
+
+```{r}
+abtrain_xsex <- abtrain[,-1] # sex değişkenimiz kategorik olduğu için burada çıkarıyorum
+View(abtrain_xsex)
+cor(abtrain_xsex)
+
+```
+ 
+ Korelasyon matrisi incelendiğinde bağımlı değişken (rings) ile bağımsız değişkenler arasındaki ilşikilerin çoğu pozitif yönlü görünüyor.
+ 
+ 
+ Matris incelendiğinde bağımsız değişkenler arasında ilişki olduğu görülmektedir. En çokta length ve diameter arasındaki yüksek oranda ilişkiyi görebiliyoruz
+ 
+ Bu da bize multicolinerty sorunu olabileceğini söyler. Bu sorunu inceleyecegiz.
+
+
+
+
+
+
+### Model oluşturma ###
+
+Tüm değişkenleri içeren bir modeli oluşturmakla başlıyoruz:
+
+
+```{r}
+abtrain_model1 = lm(rings~.,data=abtrain) # Bütün değişkenleri içine aldığımız modeli oluşturuyoruz.
+summary(abtrain_model1)
+```
+
+Hipotez testlerimiz için $α$ yı $0.05$ olarak alacağım
+
+  Test sonucundan $R2 = 0.5408$ olduğunu,  p değerinin $2.2*10~-16$'dan küçük olduğunu görebiliriz 
+ve bu,$α,0.05$'in normal anlamlı değerlerinden daha düşüktür. Yani sıfır hipotezini reddediyoruz.
+
+Katkı modelini tüm tahmin edicilere uydurduktan sonra, Test istatistiklerinin length hariç tüm değişkenleri anlamlı olarak gösterdiğini görebiliriz.
+
+
+
+
+
+Veri setinin korelasyonuna baktığımızda değişkenler arasında çoklu bağlantı sorunu olabileceğini götmüştük. Veri seti ile Çoklu bağlantı sorununun varlığını bulmak için VIF değerini hesaplayacağız;
+```{r}
+vif(abtrain_model1)
+```
+ Tüm değişkenler için VIF faktörüne baktık ve Cinsiyet ve Boy dışında tüm tahmin edicilerin çoklu bağlantı sorunu olduğu görülüyor, çoğu 10'dan büyük bunları kontrol edeceğiz. 
+VE whole_weight değişkeninin en yuksek VIF degerine sahip oldugunu gorebiliyoruz.
+
+
+ whole_weight i çıkardığımızda VIF degeri nasıl olucak gözlemleyelim;
+```{r}
+abtrain_model1_without_whole_weight <- lm(rings~.-whole_weight,data=abtrain) # whole_weight i çıkardığımız model
+vif(abtrain_model1_without_whole_weight)
+```
+
+Görüldüğü üzere whole_wieght i çıkardığımızda $shucked_weight$, $viscera_veight$ ve $shell_weight$ üzerindeki vif değerlerinin düşüşünü gözlemleyebiliyoruz ama hâlâ daha 10 dan yüksek degerde olan vif degerleri var oyüzden birdahaki modelde $diameter$ değişkeninide çıkararak kontrol ediyoruz ;
+```{r}
+abtrain_model1_without_ww_diameter <- lm(rings~.-whole_weight-diameter,data=abtrain) # whole_weight ve diameterin olmadığı model
+vif(abtrain_model1_without_ww_diameter)
+```
+
+ Şuan değerlerden görüldüğü üzere VIF puanlarımda çok düştü fakat ne kadar düşse de R2 dede düşüş yaşandı bu bazı değişkenlerin modelde kalması gerektiğini gösteriyor.
+
+
+
+
+
+
+Şimdi son bulduğumuz modele bakalım;
+```{r}
+abtrain_model2 = lm(rings~.-whole_weight -diameter,data=abtrain) # karmaşık olmaması adına model2 olarak adlandırıyorum
+summary(abtrain_model2)
+```
+Bu modele baktığımızda önceki modele göre lengthin anlamlı viscera_veight in ise anlamsız olduğunu görüyoruz.
+
+Birde bu modelden viscevara_veighti çıkararak bakalım nasıl değiştiğini;
+
+
+```{r}
+abtrain_model2.1 = lm(rings~.-whole_weight -diameter -viscera_veight,data=abtrain)
+summary(abtrain_model2.1)
+```
+
+R2 ve  residuallerde bi değişikliğin olmadığını görebiliyoruz. Bu 2 modelin AIC, BIC ve RMSE sine bakarak hangisini kullanacağımıza karar verelim.
+
+```{r}
+AIC(abtrain_model2, k=8)
+BIC(abtrain_model2)
+sqrt(sum(abtrain_model2$residuals**2)/length(abtrain_model2$residuals)) # RMSE yi ölçüyoruz burada
+
+
+AIC(abtrain_model2.1, k=7)
+BIC(abtrain_model2.1)
+sqrt(sum(abtrain_model2.1$residuals**2)/length(abtrain_model2.1$residuals))
+
+```
+sonuçlara göre abtrain_model2.1 in AIC ve BIC değerleri iyi abtrain_model2 nin de RMSE si iyi burada fazla bir fark yok o yüzden viscera_veightin olmadığı abtrain_model2.1 i kullanacağım.
+
+
+
+
+
+
+Bir de $Step Wise$ ile bulabileceğimiz modeli araştıralım;
+
+```{r}
+# Burada bothside ile oluşturacağım
+
+step(lm(rings~1, data=abtrain),direction = "both",
+     scope = ~sex+length+diameter+height+whole_weight+shucked_weight+viscera_veight+shell_weight)
+```
+Modelden length çıktıntan sonra nihai model olarak shell_weight + shucked_weight + diameter + sex + whole_weight + viscera_veight + height olduğunu buluyoruz
+
+
+
+
+Step wise tekniğinin oluşturduğu model üzerinde AIC BIC ve RMSE değerlerine bakalım;
+```{r}
+# stepwise üzerinden çıkarılan modeli oluşturuyoruz
+abtrain_model3 <- lm(rings ~ shell_weight + shucked_weight + diameter + sex + whole_weight + viscera_veight + height, data = abtrain)
+summary(abtrain_model3)
+```
+
+Bu bulduğumuz model en baştada da oluşturduğumuz modelden anlamsız olan lenghtin çıkarılmasıyla oluşmuş bir model ve bulduğumuz modeller arasinda en yüksek R2 degerine sahip model.
+
+
+
+BU model için birde AIC, BIC ve RMSE değerlerini analiz edilebilecek olan abtrain_model2.1 ile karşılaştıralım ;
+
+```{r}
+AIC(abtrain_model3, k=9)
+BIC(abtrain_model3)
+sqrt(sum(abtrain_model3$residuals**2)/length(abtrain_model3$residuals))
+
+
+AIC(abtrain_model2.1, k=7)
+BIC(abtrain_model2.1)
+sqrt(sum(abtrain_model2.1$residuals**2)/length(abtrain_model2.1$residuals))
+```
+
+Sonuca göre abtrain_model3 ün daha iyi değerlere sahip olduğunu görebiliyoruz.
+
+
+
+
+
+ Bir de şimdiye kadar oluşturduğumuz modellerden eğer var ise aykırı değerleri çıkararak modelleri güncelleyelim ve inceleyelim;
+```{r}
+
+# abtrain_model1 için cook.distance
+
+dist <- cooks.distance(abtrain_model1)
+olcut1 <- mean(dist)*3
+olcut2 <- 4/length(dist)
+olcut1;olcut2
+
+olcut1Index <- which(dist > olcut1)
+olcut2Index <- which(dist > olcut2)
+length(olcut1Index)
+length(olcut2Index)
+
+
+```
+
+Burada iki ölçüt için birinde 24 diğerinde ise 207 aykırı değer var burada fazla olanı seçiyorum.
+```{r}
+abtrainrem_model1 <- abtrain[-olcut2Index,]
+```
+
+modeli güncelliyorum;
+```{r}
+abtrain_model1rem = lm(rings~.-length,data=abtrainrem_model1) 
+summary(abtrain_model1rem)
+```
+
+Burada gördüğümüz üzere ilk abtrain_model1 den aykırıları çıkarınca R2 deki artışı görebiliyoruz, birde AIC, BIC ve RMSE leri karşılaştıralım;
+```{r}
+AIC(abtrain_model1, k=10)
+BIC(abtrain_model1)
+sqrt(sum(abtrain_model1$residuals**2)/length(abtrain_model1$residuals))
+
+
+AIC(abtrain_model1rem, k=10)
+BIC(abtrain_model1rem)
+sqrt(sum(abtrain_model1rem$residuals**2)/length(abtrain_model1rem$residuals))
+```
+
+ Aykırı değerleri çıkardığımızda modelin ne kadar iyileştiğini gözlemleyebiliyoruz AIC, BIC ve RMSE de ki ciddi değişim fark edilebiliyor.
+ 
+ Aykırı değerlerin modeli ne kadar etkilediğini gördüğümüze göre öbür modellerimizden de aykırı değerleri çıkaralım;
+ 
+ abtrain_model2.1 i güncelliyoruz:
+```{r}
+dist <- cooks.distance(abtrain_model2.1)
+olcut1 <- mean(dist)*3
+olcut2 <- 4/length(dist)
+olcut1;olcut2
+
+olcut1Index <- which(dist > olcut1)
+olcut2Index <- which(dist > olcut2)
+length(olcut1Index)
+length(olcut2Index)
+
+abtrainrem_model2.1 <- abtrain[-olcut2Index,] # aykırı değeri fazla olanı seçiyorum
+
+abtrain_model2.1rem = lm(rings~.-whole_weight -diameter -viscera_veight,data=abtrainrem_model2.1) 
+summary(abtrain_model2.1rem)
+```
+ 
+abtrain_model3 ü de güncelleyelim:
+```{r}
+dist <- cooks.distance(abtrain_model3)
+olcut1 <- mean(dist)*3
+olcut2 <- 4/length(dist)
+olcut1;olcut2
+
+olcut1Index <- which(dist > olcut1)
+olcut2Index <- which(dist > olcut2)
+length(olcut1Index)
+length(olcut2Index)
+
+abtrainrem_model3 <- abtrain[-olcut2Index,] # aykırı değeri fazla olanı seçiyorum
+
+abtrain_model3rem = lm(rings~.-length,data=abtrainrem_model3) 
+summary(abtrain_model3rem)
+```
+
+Aykırı değerler çıkarıldığın da bütün modellerde oluşan değişimi görebiliyoruz, R2 ler artmış durumda.
+Şimdi aykırı değerleri atılmış olan modellerde karşılaştırma yapıp birini seçelim.
+
+```{r}
+cat("abtrain_model1rem    --->   AIC:", AIC(abtrain_model1rem, k=10),"   BIC:", BIC(abtrain_model1rem), "   RMSE:", sqrt(sum(abtrain_model1rem$residuals**2)/length(abtrain_model1rem$residuals)), "\n")
+
+cat("abtrain_model2.1rem  --->   AIC:", AIC(abtrain_model2.1rem, k=7),"   BIC:", BIC(abtrain_model2.1rem), "   RMSE:", sqrt(sum(abtrain_model2.1rem$residuals**2)/length(abtrain_model2.1rem$residuals)), "\n")
+
+cat("abtrain_model3rem    --->   AIC:", AIC(abtrain_model3rem, k=10),"   BIC:", BIC(abtrain_model3rem), "    RMSE:", sqrt(sum(abtrain_model3rem$residuals**2)/length(abtrain_model3rem$residuals)))
+
+
+```
+
+ Burada AIC, BIC ve RMSE olarak abtrain_model3rem in daha iyi olduğunu gördük. Şuanda abtrain_model3rem önceki modellere göre bulduğumuz en iyi modelimiz.
+ 
+ 
+ abtrain_model3rem modelimiz grafiğine bakalım :
+```{r}
+plot(abtrain_model3rem)
+```
+
+ İlk grafikte, modelin sabit değişimi ihlal ettiğini ve uygun değerler arttıkça artıkların da arttığı bir modele sahip olduğunu görüyoruz. Değişen varyans sorunu olabileceğini düşünüyoruz.
+ 
+ Normal QQ çiziminde ayrıca, hataların normal olarak dağılmayabileceğinin bir göstergesi olan kalın kuyruk vardır.
+ 
+
+
+  Modele log dönüşümü uygulayarak tekrar kontrol edelim ;
+  
+```{r}
+abtrain_model3remlogged = lm(log(rings)~.-length,data=abtrainrem_model3) 
+summary(abtrain_model3remlogged)
+plot(abtrain_model3remlogged)
+
+```
+  
+
+Önceki modele kıyasla daha iyi sabit varyasyona ve Q-Q grafiklerine sahip olduğunu görüyoruz.
+```{r}
+sqrt(mean((abtrainrem_model3$rings - exp(fitted(abtrain_model3remlogged))) ^2))
+sqrt(sum(abtrain_model3rem$residuals**2)/length(abtrain_model3rem$residuals))
+```
+
+
+
+
+değişen varyans sorunumuz için Ağırlıklı en küçük kareler parametre tahminini deneyelim:
+
+```{r}
+library(quantreg)
+resid<-residuals(abtrain_model3rem)
+kareresid<-resid^2
+pred<-predict(abtrain_model3rem)
+mod<-lm(abs(rings)~.-length,data=abtrainrem_model3)
+weights<-1/predict(mod)^2
+weightedmodel<-lm(rings~.-length,data=abtrainrem_model3,weight=weights)
+
+bptest(weightedmodel)
+summary(weightedmodel)
+```
+Breusch-Pagan test ten de görüldüğü üzere değişen varyans sorunumuz Weighted_Least_Squares ile çözülmüştür.
+
+şimdi weightedmodelimizi karşılaştıralım:
+```{r}
+AIC(weightedmodel,k=9)
+BIC(weightedmodel)
+sqrt(sum(weightedmodel$residuals**2)/length(weightedmodel$residuals))
+
+AIC(abtrain_model3rem,k=9)
+BIC(abtrain_model3rem)
+sqrt(sum(abtrain_model3rem$residuals**2)/length(abtrain_model3rem$residuals))
+```
+weightedmodelin AIC ve BIC değerleri iyi olsada abtrain_model3rem in rmse si bir tık daha iyi.
+
+ Bir de modelleri testset üzerinden test edelim:
+```{r}
+predictionswm<-predict(weightedmodel,abtest)
+R2(predictionswm,abtest$rings)
+RMSE(predictionswm,abtest$rings)
+MAE(predictionswm,abtest$rings)
+
+```
+```{r}
+predictionsrm<-predict(abtrain_model3rem,abtest)
+R2(predictionsrm,abtest$rings)
+RMSE(predictionsrm,abtest$rings)
+MAE(predictionsrm,abtest$rings)
+```
+MAE de az da olsa bir düşüş yaşanmıştır fakat iki model arasında pek te bir fark yoktur.
+
+
+
+weightedmodelimizin grafiklerine bakalım:
+```{r}
+plot(weightedmodel)
+```
+değişen varyans sorunumuz geçmişti zaten bptestde de görmüştük fakat 2. grafikte normallikte sıkıntı var gibi gözüküyor
+
+weigtedmodel üzerinde log dönüşümü deneyelim:
+```{r}
+weightedmodellog<-lm(log(rings)~.-length,data=abtrainrem_model3,weight=weights)
+summary(weightedmodellog)
+plot(weightedmodellog)
+
+```
+
+modelin R2 sinin iyi derece arttığını  ve q-q plotta da normmalleştiğini gözlemleyebiliyoruz
+
+modelleri karşılaştıralım:
+```{r}
+rmse <-  function(actual, predicted) {
+  sqrt(mean((actual - predicted) ^ 2))
+}
+
+
+cat(sqrt(mean((abtrainrem_model3$rings - exp(fitted(weightedmodellog))) ^2)), "wmlog","\n")
+cat(sqrt(mean((abtest$rings - exp(predict(weightedmodellog, newdata=abtest))) ^ 2)), "wmlog", "\n")
+
+cat(rmse(abtrain$rings, predict(weightedmodel,abtrain)), "wm", "\n")
+cat(rmse(abtest$rings, predict(weightedmodel,abtest)),"wm")
+
+```
+
+ Test set üzerinde weightedmodel biraz daha önde olsada train set üzerinde log dönüşümünü uyguladığımız weightedmodellog modelimiz çok daha öndedir ve R2 açıklama oranı daha fazladır.
+ 
+
+### Sonuç olarak ###
+
+
+ İlk model için sabit değişim ve normallik varsayımlarını ihlal etmiştik. Ağırlıklı en küçük kareler parametre tahmini ve dönüşüm kullanarak iyi bir model bulmayı başardık. Seçilen bu aday modeller yanıt değişkeni için log dönüşümüne sahipti.
+
+ Yüksek çoklu bağlantının varlığından sonra bile, model seçimi sırasında 8 parametrenin tümünü içeren modeli seçtik. yani tüm seçim teknikleri, modeldeki tüm bağımsız değişkenler kullanıldığında en düşük AIC'nin geldiğini öne sürüyordu.
+ 
+  Modelden length değişkeninin denizkulağının yaşını tahmin etmede muhtemelen önemli bir yeri olmayacağını görebiliriz. bunu modelimizde seçmediğimizi görebiliriz. length, Diameter ile aşağı yukarı ilişkili olacağından (yani, length(uzunluk) arttıkça diameter(çap) artar gibi) bu tür bir anlam ifade eder ve modelimize zaten diameter aldığımız için, abalone veri setinde length değişkenine ihtiyacımız yoktur.
+  
+  Tahmin yaparken gördüğümüz başka bir şey de, whole_weightin tek başına yaşı tahmin etmek için kullanılamayacağıdır.
+yani bütün weightlerin(ağırlıkların) birlikte anlamlı olduğudur.
+
+Model üzerinde farklı teknikler ve dönüşümler polinom vb. kullanarak geliştirilebilir.
+  
+  
+ Elde ettiğimiz sonuçlara göre son nihai modelimiz Ağırlıklı en küçük kareler parametre tahmini ve log dönüşümü kullandığımız $weightedmodellog$ dur.
+ 
+ 
+rings = 1.156497 + (-0.089677x1) + (0.008007x2) + (2.316758x3) + (2.672324x4) + (0.633427x5) + (-1.745468x6) + (-1.018690x7) + (0.291536x8)
+
+
+
+
+
+
+
+
+
